@@ -105,6 +105,20 @@ ipcMain.handle('servicios:por-cliente', (evento, clienteId) => db.serviciosPorCl
 ipcMain.handle('servicios:todos', () => db.todosLosServicios());
 ipcMain.handle('servicios:por-vencer', (evento, dias) => db.serviciosPorVencer(dias));
 
+ipcMain.handle('informe:exportar', async (evento, nombre, datos) => {
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    title: 'Exportar informe',
+    defaultPath: nombre.replace(/\s+/g, '_') + '.xlsx',
+    filters: [{ name: 'Excel', extensions: ['xlsx'] }]
+  });
+  if (canceled || !filePath) return false;
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(datos);
+  XLSX.utils.book_append_sheet(wb, ws, 'Informe');
+  XLSX.writeFile(wb, filePath);
+  return true;
+});
+
 ipcMain.handle('datos:exportar', async (evento, fechaInicio, fechaFin) => {
   const { canceled, filePath } = await dialog.showSaveDialog({
     title: 'Exportar copia de seguridad',

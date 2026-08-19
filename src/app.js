@@ -248,6 +248,7 @@ function renderTodo() {
   renderClientes();
   renderConversaciones();
   renderRecordatorios();
+  renderInformes();
   renderBadge();
 }
 
@@ -1013,6 +1014,253 @@ function abrirFormularioRecordatorio(clienteIdPrefill, id) {
     renderTodo();
     notificar(recordatorio ? 'Recordatorio actualizado.' : 'Recordatorio creado.');
   });
+}
+
+/* ================= INFORMES ================= */
+
+function renderInformes() {
+  const clientes = estado.clientes;
+  const conversaciones = estado.conversaciones;
+  const recordatorios = estado.recordatorios;
+
+  // Tarjetas resumen
+  const totalIngresos = conversaciones.reduce((s, c) => s + (c.valor || 0), 0);
+  const convConValor = conversaciones.filter(c => c.valor > 0).length;
+  const serviciosVencidos = clientes.filter(c => {
+    const hoy = fechaHoyLocal();
+    return (c.soat && c.soat < hoy) || (c.tecnico_mecanica && c.tecnico_mecanica < hoy) || (c.extintor && c.extintor < hoy);
+  }).length;
+
+  $('tarjetas-resumen-informes').innerHTML = [
+    { clase: 'acento', valor: clientes.length, etiqueta: 'Total clientes' },
+    { clase: 'verde', valor: conversaciones.length, etiqueta: 'Total conversaciones' },
+    { clase: 'ambar', valor: '$' + totalIngresos.toLocaleString('es-CO'), etiqueta: 'Ingresos totales' },
+    { clase: serviciosVencidos ? '' : '', valor: serviciosVencidos, etiqueta: 'Documentos vencidos' }
+  ].map(t => `
+    <div class="tarjeta-resumen ${t.clase}">
+      <div class="etiqueta-mini">${t.etiqueta}</div>
+      <div class="valor">${t.valor}</div>
+    </div>`).join('');
+
+  // Grid de informes
+  const informes = [
+    { id: 'inf-serv-vencer', titulo: 'Servicios por vencer', icono: '⏰', fn: () => generarInformeServiciosPorVencer() },
+    { id: 'inf-ingresos', titulo: 'Ingresos por mes', icono: '💰', fn: () => generarInformeIngresos() },
+    { id: 'inf-serv-mas', titulo: 'Servicios más solicitados', icono: '🔧', fn: () => generarInformeServiciosPopulares() },
+    { id: 'inf-top-clientes', titulo: 'Top clientes', icono: '🏆', fn: () => generarInformeTopClientes() },
+    { id: 'inf-municipio', titulo: 'Distribución geográfica', icono: '📍', fn: () => generarInformeGeografico() },
+    { id: 'inf-tipo-conv', titulo: 'Conversaciones por tipo', icono: '📊', fn: () => generarInformeTiposConv() },
+    { id: 'inf-recordatorios', titulo: 'Recordatorios vencidos', icono: '⚠️', fn: () => generarInformeRecordatoriosVencidos() },
+    { id: 'inf-vehiculos', titulo: 'Vehículos por tipo', icono: '🚗', fn: () => generarInformeVehiculos() }
+  ];
+
+  $('grid-informes').innerHTML = informes.map(inf => `
+    <div class="card-informe" id="${inf.id}">
+      <div class="card-informe-cabecera">
+        <span class="card-informe-icono">${inf.icono}</span>
+        <h3>${inf.titulo}</h3>
+      </div>
+      <div class="card-informe-contenido"></div>
+      <div class="card-informe-acciones">
+        <button class="btn-primario btn-exportar-informe" data-informe="${inf.id}">Exportar Excel</button>
+      </div>
+    </div>`).join('');
+
+  informes.forEach(inf => inf.fn());
+
+  $('grid-informes').querySelectorAll('.btn-exportar-informe').forEach(btn => {
+    btn.addEventListener('click', () => exportarInforme(btn.dataset.informe));
+  });
+}
+
+function generarInformeServiciosPorVencer() {
+  const hoy = fechaHoyLocal();
+  const limite30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+  const limite90 = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+  const filas = [];
+
+  estado.clientes.forEach(c => {
+    if (c.soat) {
+      const vencido = c.soat < hoy;
+      const rango = c.soat <= limite30 ? '0-30 días' : c.soat <= limite90 ? '31-90 días' : null;
+      if (vencido || rango) filas.push({ Cliente: c.nombre, Placa: c.placa, Documento: 'SOAT', Vence: c.soat, Estado: vencido ? 'VENCIDO' : rango });
+    }
+    if (c.tecnico_mecanica) {
+      const vencido = c.tecnico_mecanica < hoy;
+      const rango = c.tecnico_mecanica <= limite30 ? '0-30 días' : c.tecnico_mecanica <= limite90 ? '31-90 días' : null;
+      if (vencido || rango) filas.push({ Cliente: c.nombre, Placa: c.placa, Documento: 'Tecnomecánica', Vence: c.tecnico_mecanica, Estado: vencido ? 'VENCIDO' : rango });
+    }
+    if (c.extintor) {
+      const vencido = c.extintor < hoy;
+      const rango = c.extintor <= limite30 ? '0-30 días' : c.extintor <= limite90 ? '31-90 días' : null;
+      if (vencido || rango) filas.push({ Cliente: c.nombre, Placa: c.placa, Documento: 'Extintor', Vence: c.extintor, Estado: vencido ? 'VENCIDO' : rango });
+    }
+  });
+
+  filas.sort((a, b) => a.Vence.localeCompare(b.Vence));
+  renderTablaInforme('inf-serv-vencer', filas);
+}
+
+function generarInformeIngresos() {
+  const contador = {};
+  estado.conversaciones.forEach(c => {
+    if (!c.valor) return;
+    const mes = c.fecha ? c.fecha.slice(0, 7) : 'Sin fecha';
+    if (!contador[mes]) contador[mes] = { mes, total: 0, cantidad: 0 };
+    contador[mes].total += c.valor;
+    contador[mes].cantidad++;
+  });
+
+  const filas = Object.values(contador)
+    .sort((a, b) => b.mes.localeCompare(a.mes))
+    .map(d => ({
+      Mes: d.mes,
+      'N° conversaciones': d.cantidad,
+      Ingresos: '$' + d.total.toLocaleString('es-CO'),
+      Promedio: '$' + Math.round(d.total / d.cantidad).toLocaleString('es-CO')
+    }));
+
+  renderTablaInforme('inf-ingresos', filas);
+}
+
+function generarInformeServiciosPopulares() {
+  const contador = {};
+  estado.clientes.forEach(c => {
+    const s = c.servicio || 'Sin servicio';
+    if (!contador[s]) contador[s] = { nombre: s, cantidad: 0 };
+    contador[s].cantidad++;
+  });
+
+  const filas = Object.values(contador)
+    .sort((a, b) => b.cantidad - a.cantidad)
+    .map(d => ({ Servicio: d.nombre, 'N° clientes': d.cantidad }));
+
+  renderTablaInforme('inf-serv-mas', filas);
+}
+
+function generarInformeTopClientes() {
+  const contador = {};
+  estado.conversaciones.forEach(c => {
+    if (!contador[c.clienteId]) contador[c.clienteId] = { id: c.clienteId, total: 0, valor: 0 };
+    contador[c.clienteId].total++;
+    contador[c.clienteId].valor += c.valor || 0;
+  });
+
+  const filas = Object.values(contador)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 20)
+    .map(d => {
+      const cliente = clientePorId(d.id);
+      return {
+        Cliente: cliente ? cliente.nombre : 'Eliminado',
+        'N° conversaciones': d.total,
+        Ingresos: '$' + d.valor.toLocaleString('es-CO')
+      };
+    });
+
+  renderTablaInforme('inf-top-clientes', filas);
+}
+
+function generarInformeGeografico() {
+  const contador = {};
+  estado.clientes.forEach(c => {
+    const m = c.municipio || 'Sin especificar';
+    if (!contador[m]) contador[m] = { municipio: m, cantidad: 0 };
+    contador[m].cantidad++;
+  });
+
+  const filas = Object.values(contador)
+    .sort((a, b) => b.cantidad - a.cantidad)
+    .map(d => ({ Municipio: d.municipio, 'N° clientes': d.cantidad }));
+
+  renderTablaInforme('inf-municipio', filas);
+}
+
+function generarInformeTiposConv() {
+  const contador = {};
+  estado.conversaciones.forEach(c => {
+    const t = TIPOS[c.tipo] || c.tipo || 'Otro';
+    if (!contador[t]) contador[t] = { tipo: t, total: 0, valor: 0 };
+    contador[t].total++;
+    contador[t].valor += c.valor || 0;
+  });
+
+  const filas = Object.values(contador)
+    .sort((a, b) => b.total - a.total)
+    .map(d => ({
+      Tipo: d.tipo,
+      'N° conversaciones': d.total,
+      Ingresos: '$' + d.valor.toLocaleString('es-CO')
+    }));
+
+  renderTablaInforme('inf-tipo-conv', filas);
+}
+
+function generarInformeRecordatoriosVencidos() {
+  const hoy = fechaHoyLocal();
+  const filas = estado.recordatorios
+    .filter(r => !r.completado && r.fecha < hoy)
+    .sort((a, b) => a.fecha.localeCompare(b.fecha))
+    .map(r => {
+      const cliente = r.clienteId ? clientePorId(r.clienteId) : null;
+      return {
+        Título: r.titulo,
+        Cliente: cliente ? cliente.nombre : 'General',
+        Vencido: r.fecha,
+        Nota: r.nota || ''
+      };
+    });
+
+  renderTablaInforme('inf-recordatorios', filas);
+}
+
+function generarInformeVehiculos() {
+  const contador = {};
+  estado.clientes.forEach(c => {
+    const v = VEHICULOS[c.tipo_vehiculo] || c.tipo_vehiculo || 'Sin especificar';
+    if (!contador[v]) contador[v] = { tipo: v, cantidad: 0 };
+    contador[v].cantidad++;
+  });
+
+  const filas = Object.values(contador)
+    .sort((a, b) => b.cantidad - a.cantidad)
+    .map(d => ({ 'Tipo vehículo': d.tipo, 'N° clientes': d.cantidad }));
+
+  renderTablaInforme('inf-vehiculos', filas);
+}
+
+function renderTablaInforme(informeId, filas) {
+  const contenedor = document.querySelector(`#${informeId} .card-informe-contenido`);
+  if (!filas.length) {
+    contenedor.innerHTML = '<div class="sin-datos">Sin datos para mostrar.</div>';
+    return;
+  }
+
+  const columnas = Object.keys(filas[0]);
+  contenedor.innerHTML = `
+    <div class="tabla-contenedor" style="max-height:300px;overflow:auto">
+      <table class="tabla">
+        <thead><tr>${columnas.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+        <tbody>${filas.map(f => `<tr>${columnas.map(c => `<td>${escapeHtml(String(f[c] || '—'))}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+async function exportarInforme(informeId) {
+  const contenedor = document.querySelector(`#${informeId} .card-informe-contenido table`);
+  if (!contenedor) return;
+
+  const filas = [];
+  const headers = [...contenedor.querySelectorAll('thead th')].map(th => th.textContent);
+  contenedor.querySelectorAll('tbody tr').forEach(tr => {
+    const fila = {};
+    tr.querySelectorAll('td').forEach((td, i) => { fila[headers[i]] = td.textContent; });
+    filas.push(fila);
+  });
+
+  const nombre = document.querySelector(`#${informeId} h3`).textContent;
+  const ok = await window.api.exportarInforme(nombre, filas);
+  if (ok) notificar('Informe exportado: ' + nombre);
 }
 
 /* ================= MODALES ================= */

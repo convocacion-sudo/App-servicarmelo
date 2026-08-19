@@ -19,5 +19,6 @@ contextBridge.exposeInMainWorld('api', {
   servicioEliminar: (id) => ipcRenderer.invoke('servicios:eliminar', id),
   serviciosPorCliente: (clienteId) => ipcRenderer.invoke('servicios:por-cliente', clienteId),
   serviciosTodos: () => ipcRenderer.invoke('servicios:todos'),
-  serviciosPorVencer: (dias) => ipcRenderer.invoke('servicios:por-vencer', dias)
+  serviciosPorVencer: (dias) => ipcRenderer.invoke('servicios:por-vencer', dias),
+  exportarInforme: (nombre, datos) => ipcRenderer.invoke('informe:exportar', nombre, datos)
 });
